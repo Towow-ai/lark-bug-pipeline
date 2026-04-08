@@ -154,6 +154,7 @@ class QueueEntry:
     raw_line: str                # 原始 jsonl 行（用于 ack/skip）
     source: str = "lark-bitable" # "lark-bitable" | "lark-im" | "dry-run-seed"
     im: Optional[dict] = None    # source=="lark-im" 时：chat_id/message_id/sender_open_id/...
+    attachments: list = field(default_factory=list)  # v0.2: 多模态附件，[{kind,path,original_name,source_key}]
 
     def received_dt(self) -> dt.datetime:
         return dt.datetime.fromisoformat(self.received_at)
@@ -185,6 +186,7 @@ def read_queue() -> list[QueueEntry]:
                 raw_line=raw,
                 source=obj.get("source", "lark-bitable"),
                 im=obj.get("im"),
+                attachments=obj.get("attachments") or [],
             ))
     return entries
 
@@ -374,10 +376,13 @@ def run_triage(entry: QueueEntry, cfg: dict) -> TriageResult:
         state_file.unlink()
 
     # 把 entry 的字段以 JSON 形式喂给 skill
+    # v0.2: 多模态——attachments 是 daemon 已经下载到磁盘的本地绝对路径数组，
+    # triage 必须 Read 每个 path 之后再分类（lark-triage SKILL.md Step 0 强制要求）。
     input_payload = json.dumps({
         "record_id": entry.record_id,
         "received_at": entry.received_at,
         "fields": entry.fields,
+        "attachments": entry.attachments,
     }, ensure_ascii=False, indent=2)
 
     prompt = (
