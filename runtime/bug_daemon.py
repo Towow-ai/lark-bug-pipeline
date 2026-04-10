@@ -113,6 +113,17 @@ DAEMON_LOG = TOWOW_DIR / "lark-daemon.log"
 ENV_FILE = TOWOW_DIR / ".env.lark"
 # 附件（图片/文件）落盘根目录，按 message_id 分子目录
 ATTACHMENTS_DIR = TOWOW_DIR / "attachments"
+# flush 信号文件：用户确认"没了/开始修"时写入，worker 看到后跳过 debounce
+FLUSH_SIGNAL = TOWOW_DIR / "flush-queue.signal"
+
+# 默认 debounce 秒数（与 worker DEFAULTS 保持一致，用于回复提示）
+DEFAULTS_DEBOUNCE = 600
+
+# 用户确认触发词（去空格后匹配）
+_FLUSH_TRIGGERS = frozenset({
+    "开始修", "没了", "就这些", "没有其他问题了", "没有了",
+    "可以开始了", "go", "开始吧", "修吧", "没其他了",
+})
 
 # outbox 单条消息最多重试几次，超过移到 failed/
 MAX_OUTBOX_RETRIES = 5
@@ -644,6 +655,20 @@ def make_im_handler(state: DaemonState):
                 logging.info("[IM] 消息为空（无文本无附件），跳过")
                 return
 
+            # ── flush 检测：用户说"没了/开始修"时跳过 debounce ──
+            clean = text.strip().strip("。.！!~")
+            if clean in _FLUSH_TRIGGERS:
+                FLUSH_SIGNAL.write_text(
+                    datetime.now().astimezone().isoformat(), encoding="utf-8",
+                )
+                logging.info("[IM] flush 信号：%r → 写入 %s", clean, FLUSH_SIGNAL)
+                reply_im_message(state, {
+                    "kind": "im_reply",
+                    "message_id": message_id,
+                    "text": "好的，马上开始处理 🔧",
+                })
+                return  # flush 消息不入 bug 队列
+
             # 下载附件到 ~/.towow/attachments/<message_id>/
             attachments = _materialize_attachments(
                 state.rest, message_id, refs,
@@ -681,6 +706,18 @@ def make_im_handler(state: DaemonState):
                 message_id, message_type, chat_id[:12] + "...", sender_open_id,
                 text[:80], len(attachments),
             )
+
+            # ── 自动确认回复 ──
+            debounce_min = int(DEFAULTS_DEBOUNCE / 60)
+            reply_im_message(state, {
+                "kind": "im_reply",
+                "message_id": message_id,
+                "text": (
+                    f"收到反馈！如果还有补充可以继续发。\n"
+                    f"回复「开始修」立即处理，"
+                    f"不回复则 {debounce_min} 分钟后自动开始。"
+                ),
+            })
         except Exception:
             logging.exception("im handler 异常")
 

@@ -60,6 +60,7 @@ WORKER_LOG = TOWOW_DIR / "worker.log"
 WORKER_STATE = TOWOW_DIR / "worker.state.json"
 DAEMON_OUTBOX = TOWOW_DIR / "daemon-outbox"  # worker → daemon 消息目录
 PROCESSED_LOG = TOWOW_DIR / "processed-records.jsonl"
+FLUSH_SIGNAL = TOWOW_DIR / "flush-queue.signal"  # daemon 写入，worker 消费后删除
 WORKTREE_BASE = Path("/tmp")
 
 # ADR-040 D2: 批处理触发器参数
@@ -296,6 +297,14 @@ def evaluate_triggers(
     newest = max(e.received_dt() for e in entries)
     age_oldest = (now - oldest).total_seconds()
     silence = (now - newest).total_seconds()
+
+    # ⓪: 用户主动确认 flush（daemon 写的信号文件）
+    if FLUSH_SIGNAL.exists():
+        try:
+            FLUSH_SIGNAL.unlink()
+        except FileNotFoundError:
+            pass
+        return True, f"flush: user confirmed, {n} entries"
 
     # ②: 队列爆满
     if n >= cfg["MAX_BATCH"]:
