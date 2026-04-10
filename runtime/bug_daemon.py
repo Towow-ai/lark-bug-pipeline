@@ -759,7 +759,7 @@ def make_im_handler(state: DaemonState):
             entry = {
                 "record_id": message_id,
                 "received_at": datetime.now().astimezone().isoformat(),
-                "source": "lark-im-reply" if session else "lark-im",
+                "source": "lark-im",
                 "fields": {
                     "症状": text,
                     "复现步骤": "",
